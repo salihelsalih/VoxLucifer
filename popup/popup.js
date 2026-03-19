@@ -27,10 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 1. OTURUM VERİLERİNİ GERİ YÜKLE
   chrome.runtime.sendMessage({ action: 'GET_SESSION_DATA' }, (response) => {
-    if (chrome.runtime.lastError) {
-      console.warn('[Popup] session_data okunamadı (Arka plan henüz hazır olmayabilir):', chrome.runtime.lastError);
-      return;
-    }
+    if (chrome.runtime.lastError) return;
     if (response) {
       if (response.fullTranscript) {
         fullTranscript = response.fullTranscript;
@@ -71,24 +68,17 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   function loadHistory() {
-    console.log('[Popup] Geçmiş yükleniyor...');
     chrome.storage.local.get(['transcriptHistory'], (result) => {
-      const history = result.transcriptHistory || [];
-      console.log('[Popup] Hafızadan çekilen kayıt sayısı:', history.length);
-      displayHistory(history);
+      displayHistory(result.transcriptHistory || []);
     });
   }
 
   function displayHistory(history) {
-    if (!historyList) {
-      console.error('[Popup] historyList elementi bulunamadı!');
-      return;
-    }
-    
+    if (!historyList) return;
+
     historyList.textContent = '';
-    
+
     if (!history || history.length === 0) {
-      console.log('[Popup] Gösterilecek kayıt yok.');
       const emptyMsg = document.createElement('p');
       emptyMsg.className = 'empty-msg';
       emptyMsg.textContent = '🏖️ Henüz kaydedilmiş bir oturum yok.';
@@ -96,7 +86,6 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    console.log('[Popup] Kayıtlar listeleniyor...');
     history.forEach((item, index) => {
       const el = document.createElement('div');
       el.className = 'history-item';
@@ -218,35 +207,55 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // BAŞLAT
   startBtn.addEventListener('click', () => {
-    // 1. Önce aktif sekmeyi bul
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (!tabs[0] || !tabs[0].id) {
-        setStatus('Hata: Aktif sekme bulunamadı', 'error');
+    startBtn.disabled = true;
+    setStatus('Sekme aranıyor...', '');
+
+    // Pop-out pencere açıkken lastFocusedWindow popup'ın kendisini döndürür.
+    // Bu yüzden tüm windowları tarayıp gerçek web sekmesini buluyoruz.
+    chrome.windows.getAll({ populate: true, windowTypes: ['normal'] }, (windows) => {
+      let targetTab = null;
+
+      // Önce son odaklanan normal penceredeki aktif sekmeyi dene
+      for (const win of windows) {
+        const activeTab = win.tabs.find(t => t.active);
+        if (activeTab && activeTab.url &&
+            !activeTab.url.startsWith('chrome://') &&
+            !activeTab.url.startsWith('chrome-extension://') &&
+            !activeTab.url.startsWith('about:') &&
+            !activeTab.url.startsWith('edge://')) {
+          targetTab = activeTab;
+          break;
+        }
+      }
+
+      if (!targetTab) {
+        setStatus('Hata: Uygun bir web sekmesi bulunamadı. Bir video sayfası açık olmalı.', 'error');
         startBtn.disabled = false;
         return;
       }
-      
-      const activeTabId = tabs[0].id;
-      currentTitle = tabs[0].title || 'Youtube / Video';
-      setStatus('Yetki alınıyor...', '');
-      startBtn.disabled = true;
 
-      // 2. DOĞRUDAN BURADA Stream ID al (Kullanıcı etkileşimi burada)
+      const activeTabId = targetTab.id;
+      currentTitle = targetTab.title || 'Video Oturumu';
+      setStatus('Yetki alınıyor...', '');
+
+      // DOĞRUDAN BURADA Stream ID al (Kullanıcı etkileşimi burada)
       const tabCap = chrome['tabCapture'];
       if (tabCap && tabCap['getMediaStreamId']) {
         tabCap['getMediaStreamId']({ targetTabId: activeTabId }, (streamId) => {
-          if (!streamId) {
-            setStatus('Hata: Ses izni alınamadı (Sekmeyi yenileyip deneyin)', 'error');
+          if (chrome.runtime.lastError || !streamId) {
+            const errMsg = chrome.runtime.lastError?.message || 'Bilinmeyen hata';
+            if (errMsg.includes('activeTab') || errMsg.includes('cannot be captured')) {
+              setStatus('Hata: Bu sayfa yakalanamaz. Bir video içeren sekmeye gidin ve sağ tık → "VoxLucifer ile Dinlemeyi Başlat" deneyin.', 'error');
+            } else {
+              setStatus('Hata: Ses izni alınamadı — ' + errMsg, 'error');
+            }
             startBtn.disabled = false;
             return;
           }
 
-          console.log('Stream ID Alındı:', streamId);
-
-          // 3. ID'yi Background'a gönder
           chrome.runtime.sendMessage({
             action: 'START_CAPTURE',
-            streamId: streamId, // ID'yi biz bulup gönderiyoruz
+            streamId: streamId,
             title: currentTitle,
             lang: langSelect.value
           }, (response) => {
@@ -261,7 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
           });
         });
       } else {
-        setStatus('Hata: Tarayıcınız bu apiyi desteklemiyor.', 'error');
+        setStatus('Hata: Tarayıcınız tabCapture API desteklemiyor.', 'error');
         startBtn.disabled = false;
       }
     });
@@ -302,6 +311,74 @@ document.addEventListener('DOMContentLoaded', () => {
     updateWordCount(0);
   });
 
+  // API Anahtarını ve Cheat Ayarlarını Yükle
+  chrome.storage.local.get(['apiKey', 'cheatMode', 'cheatDomains'], (result) => {
+    if (result.apiKey) {
+      apiKeyInput.value = result.apiKey;
+    }
+
+    const cheatMode = result.cheatMode || false;
+    const cheatDomains = result.cheatDomains || ['uzak.mehmetakif.edu.tr'];
+
+    const cheatToggle = document.getElementById('cheatModeToggle');
+    const cheatOptions = document.getElementById('cheatOptions');
+
+    if (cheatToggle) {
+        cheatToggle.checked = cheatMode;
+        cheatOptions.style.display = cheatMode ? 'block' : 'none';
+
+        cheatToggle.addEventListener('change', (e) => {
+            const active = e.target.checked;
+            cheatOptions.style.display = active ? 'block' : 'none';
+            chrome.storage.local.set({ cheatMode: active });
+        });
+    }
+
+    renderDomains(cheatDomains);
+  });
+
+  function renderDomains(domains) {
+    const list = document.getElementById('domainList');
+    if (!list) return;
+    list.innerHTML = '';
+    domains.forEach(d => {
+      const tag = document.createElement('div');
+      tag.className = 'domain-tag';
+      tag.innerHTML = `<span>${d}</span><span class="remove-domain" data-domain="${d}">×</span>`;
+      list.appendChild(tag);
+    });
+
+    document.querySelectorAll('.remove-domain').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const d = btn.dataset.domain;
+        chrome.storage.local.get(['cheatDomains'], (res) => {
+          const newList = (res.cheatDomains || []).filter(item => item !== d);
+          chrome.storage.local.set({ cheatDomains: newList }, () => renderDomains(newList));
+        });
+      });
+    });
+  }
+
+  const addDomainBtn = document.getElementById('addDomainBtn');
+  if (addDomainBtn) {
+    addDomainBtn.addEventListener('click', () => {
+        const input = document.getElementById('newDomainInput');
+        const val = input.value.trim().toLowerCase();
+        if (!val) return;
+    
+        chrome.storage.local.get(['cheatDomains'], (res) => {
+          let list = res.cheatDomains || ['uzak.mehmetakif.edu.tr'];
+          if (!list.includes(val)) {
+            list.push(val);
+            chrome.storage.local.set({ cheatDomains: list }, () => {
+              renderDomains(list);
+              input.value = '';
+            });
+          }
+        });
+      });
+  }
+
   // AYARLARI KAYDET
   saveSettingsBtn.addEventListener('click', () => {
     const key = apiKeyInput.value.trim();
@@ -332,14 +409,14 @@ document.addEventListener('DOMContentLoaded', () => {
     chrome.windows.create({
       url: chrome.runtime.getURL('popup/popup.html'),
       type: 'popup',
-      width: 400,
+      width: 420,
       height: 600
     });
   });
 
   function setStatus(text, type) {
-    statusSpan.textContent = text;
-    statusDot.className = 'status-dot' + (type ? ' ' + type : '');
+    if (statusSpan) statusSpan.textContent = text;
+    if (statusDot) statusDot.className = 'status-dot' + (type ? ' ' + type : '');
   }
 
   function updateWordCount(n) {

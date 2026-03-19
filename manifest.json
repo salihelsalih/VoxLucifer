@@ -10,7 +10,8 @@
     "tabs",
     "offscreen",
     "tabCapture",
-    "sidePanel"
+    "sidePanel",
+    "contextMenus"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -25,7 +26,7 @@
     }
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' wss://api.deepgram.com https://api.deepgram.com"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
   },
   "background": {
     "service_worker": "background.js"
@@ -38,6 +39,15 @@
       "128": "icons/icon128.png"
     }
   },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+V",
+        "mac": "Alt+Shift+V"
+      },
+      "description": "Eklenti menüsünü açar"
+    }
+  },
   "content_scripts": [
     {
       "matches": [
@@ -45,12 +55,20 @@
       ],
       "js": [
         "content.js"
-      ]
+      ],
+      "run_at": "document_start",
+      "all_frames": true
     }
   ],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["inject.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

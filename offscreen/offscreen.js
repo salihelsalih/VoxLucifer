@@ -1,116 +1,120 @@
-// offscreen.js - Plan D: Deepgram (Free 200h/month) Implementation
+// offscreen.js - VoxLucifer Deepgram Ses İşleme
 let socket = null;
 let audioContext = null;
 let stream = null;
 
 chrome.runtime.onMessage.addListener(async (message) => {
-  if (message.action === 'OFFSCREEN_START_VOSK') {
-    startDeepgram(message.apiKey, message.streamId);
+  if (message.action === 'OFFSCREEN_START') {
+    startDeepgram(message.apiKey, message.streamId, message.lang);
   }
-  if (message.action === 'OFFSCREEN_STOP_VOSK') {
+  if (message.action === 'OFFSCREEN_STOP') {
     stopDeepgram();
   }
 });
 
-async function startDeepgram(apiKey, streamId) {
+async function startDeepgram(apiKey, streamId, lang) {
   if (!apiKey) {
-    notifyStatus("⚠️ Ayarlardan OpenAI/Deepgram Anahtarı Girin", "error");
+    notifyStatus("⚠️ API Anahtarı Eksik — Eklenti ayarlarından girin.", "error");
     return;
   }
 
-  try {
-    notifyStatus("🚀 Deepgram Bağlanıyor...", "busy");
+  // tr-TR → tr gibi normalize et (Deepgram kısa kodu tercih eder)
+  const language = (lang || 'tr').split('-')[0];
 
-    // Deepgram WebSocket URL (Parametreleri netleştirelim)
-    const url = 'wss://api.deepgram.com/v1/listen?language=en&smart_format=true&model=nova-2&encoding=linear16&sample_rate=16000';
-    socket = new WebSocket(url, ['token', apiKey]);
+  try {
+    notifyStatus("🔗 Deepgram'a bağlanıyor...", "busy");
+
+    const wsUrl = `wss://api.deepgram.com/v1/listen?language=${language}&smart_format=true&model=nova-2&encoding=linear16&sample_rate=16000`;
+    socket = new WebSocket(wsUrl, ['token', apiKey]);
 
     socket.onopen = async () => {
-      notifyStatus("📡 Dinleniyor (Deepgram)", "active");
-      
-      // Tab sesini yakala
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          mandatory: {
-            chromeMediaSource: 'tab',
-            chromeMediaSourceId: streamId
-          }
-        },
-        video: false
-      });
+      notifyStatus("🎙️ Dinleniyor...", "active");
+
+      try {
+        // Tab sesini yakala
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            mandatory: {
+              chromeMediaSource: 'tab',
+              chromeMediaSourceId: streamId
+            }
+          },
+          video: false
+        });
+      } catch (mediaErr) {
+        notifyStatus("⚠️ Ses yakalama hatası: " + mediaErr.message, "error");
+        socket.close();
+        return;
+      }
 
       audioContext = new AudioContext({ sampleRate: 16000 });
-      await audioContext.resume(); // Safari/Chrome autoplay policy
-      
-      const source = audioContext.createMediaStreamSource(stream);
+      await audioContext.resume();
 
-      // SESİN DUYULMASI İÇİN: Source'u doğrudan destination'a bağla
-      // Bu sayede yakalanan ses hoparlöre de gider.
+      const source = audioContext.createMediaStreamSource(stream);
+      // Kullanıcı sesi duymaya devam etsin
       source.connect(audioContext.destination);
 
-      // AudioWorklet modülünü yükle
+      // AudioWorklet ile ses verisi al
       await audioContext.audioWorklet.addModule('audio-processor.js');
-      
       const workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
 
       workletNode.port.onmessage = (event) => {
         if (!socket || socket.readyState !== WebSocket.OPEN) return;
-
         const input = event.data;
-        // Float32 -> Int16 dönüşümü
-        const pcmData = new Int16Array(input.length);
+        const pcm = new Int16Array(input.length);
         for (let i = 0; i < input.length; i++) {
-          pcmData[i] = Math.max(-1, Math.min(1, input[i])) * 0x7FFF;
+          pcm[i] = Math.max(-1, Math.min(1, input[i])) * 0x7FFF;
         }
-        socket.send(pcmData.buffer);
+        socket.send(pcm.buffer);
       };
 
       source.connect(workletNode);
     };
 
-    socket.onmessage = (message) => {
-      const received = JSON.parse(message.data);
-      const transcript = received.channel?.alternatives[0]?.transcript;
-      
-      if (transcript && received.is_final) {
-        chrome.runtime.sendMessage({
-          action: 'TRANSCRIPT_UPDATE',
-          text: transcript + ' ',
-          isFinal: true
-        });
-      } else if (transcript) {
-        chrome.runtime.sendMessage({
-          action: 'TRANSCRIPT_UPDATE',
-          text: '',
-          interim: transcript,
-          isFinal: false
-        });
-      }
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        const transcript = data.channel?.alternatives[0]?.transcript;
+        if (!transcript) return;
+
+        if (data.is_final) {
+          chrome.runtime.sendMessage({
+            action: 'TRANSCRIPT_UPDATE',
+            text: transcript + ' ',
+            isFinal: true
+          });
+        } else {
+          chrome.runtime.sendMessage({
+            action: 'TRANSCRIPT_UPDATE',
+            text: '',
+            interim: transcript,
+            isFinal: false
+          });
+        }
+      } catch (e) {}
     };
 
     socket.onerror = (err) => {
-      console.error('[Offscreen] Deepgram Hatası:', err);
-      notifyStatus("⚠️ Bağlantı Hatası", "error");
+      notifyStatus("⚠️ Deepgram bağlantı hatası. API anahtarınızı kontrol edin.", "error");
     };
 
-    socket.onclose = () => {
-      console.log('[Offscreen] Deepgram Kapandı');
+    socket.onclose = (ev) => {
+      // Anormal kapanma (1000 = normal)
+      if (ev.code !== 1000) {
+        notifyStatus("⚠️ Bağlantı kesildi (kod: " + ev.code + ")", "error");
+      }
       stopDeepgram();
     };
 
   } catch (err) {
-    console.error('[Offscreen] Başlatma Hatası:', err);
     notifyStatus("⚠️ Hata: " + err.message, "error");
   }
 }
 
 function stopDeepgram() {
-  if (socket) {
-    socket.close();
-    socket = null;
-  }
-  if (audioContext) audioContext.close();
-  if (stream) stream.getTracks().forEach(track => track.stop());
+  if (socket) { socket.close(); socket = null; }
+  if (audioContext) { audioContext.close(); audioContext = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   notifyStatus("⏹ Durduruldu", "");
 }
 

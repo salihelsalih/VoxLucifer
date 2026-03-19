@@ -86,6 +86,43 @@
       <button id="saveSettingsBtn" class="save-btn">💾 Ayarları Kaydet</button>
       <div id="saveMsg" class="save-msg"></div>
 
+      <div class="settings-divider"></div>
+
+      <!-- CHEAT MODU AYARLARI -->
+      <div class="cheat-settings">
+        <div class="cheat-header">
+          <div class="cheat-title">
+            <span>🛡️ UZEM-Cheat Modu</span>
+            <div class="tooltip-container">
+              <span class="tooltip-icon">?</span>
+              <div class="tooltip-text">
+                Bu mod aktif edildiğinde Hedef Sitelerde şunlar yapılır:<br>
+                • Sağ tık engeli kaldırılır<br>
+                • Kopyala/Yapıştır yasağı aşılır<br>
+                • Metin seçme kilidi açılır<br>
+                • "Özellik devre dışı" uyarıları susturulur<br>
+                • Kısıtlı pencereler normal sekmeye zorlanır
+              </div>
+            </div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="cheatModeToggle">
+            <span class="slider round"></span>
+          </label>
+        </div>
+
+        <div id="cheatOptions" class="cheat-options" style="display: none;">
+          <label>🎯 Hedef Siteler (Domain)</label>
+          <div id="domainList" class="domain-list">
+            <!-- Dinamik olarak dolacak -->
+          </div>
+          <div class="add-domain-row">
+            <input type="text" id="newDomainInput" placeholder="örn: sinav.site.com">
+            <button id="addDomainBtn">+</button>
+          </div>
+        </div>
+      </div>
+
       <div class="settings-footer">
         <div class="credit">
           bu eklenti <b>Yushiro</b> tarafından yapılmıştır <span class="heart">❤️</span>
